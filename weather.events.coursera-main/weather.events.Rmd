@@ -1,0 +1,179 @@
+---
+title: "Storm and Weather Events Impacts in the USA Between 1951 and 2011"
+author: "Milton Leal"
+date: "11/02/2021"
+output: html_document
+---
+
+## Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration’s (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+## Loading and Processing the Raw Data
+
+From the U.S. National Oceanic and Atmospheric Administration's (NOAA) website we obtained data ([Storms data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)) on storms and other severe weather events that is monitored across the U.S. We obtained the files for the years between 1951 and 2011.
+
+### Downloading and Reading in the data
+
+We first create a folder called "data" to store the file we will download.
+
+```{r}
+#creating data directory
+
+if (!dir.exists("data")){
+  dir.create("data")
+}
+
+fileurl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+if (!file.exists("./data/StormData.csv.bz2")){
+  download.file(fileurl, "./data/StormData.csv.bz2", method = "curl")
+}
+
+```
+
+Then, we read the CSV file using the data.table library. 
+
+```{r, cache = TRUE}
+#reading the data with data.table library and R.utils library
+library(data.table)
+library(utils)
+weather.data <- fread("./data/StormData.csv.bz2")
+```
+
+After reading, we check the data frame dimensions and head. 
+
+```{r}
+dim(weather.data)
+head(weather.data)
+```
+
+The data frame has many variables we won't use for this analysis. We select only the variables needed and further check the dimensions and head of the data frame subset. 
+
+## Data Processing
+
+### Health Impact Analysis
+
+Let's start by addressing the first question asked which is related to the population Health Impacts caused by weather events
+
+```{r}
+library(dplyr)
+
+subset.health <- select(weather.data, FATALITIES, INJURIES, PROPDMG, 
+                              PROPDMGEXP, CROPDMG, CROPDMGEXP, EVTYPE)
+dim(subset.health)
+head(subset.health)
+```
+
+Now, let's take a look at the first question we need to address. 
+
+*Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?*
+
+Let's check how many different types of events we have in the variable EVTYPE.
+
+```{r}
+length(unique(subset.health$EVTYPE))
+```
+
+According to NOAA's website there are only 48 official types of weather events. There are for sure many typos introduced in the EVTYPE variable. 
+
+Let's group the EVTYPE variable by total Fatalities and Injuries to see if there's a bulk of data that may interest us. 
+
+```{r}
+health.grouped <- subset.health %>% group_by(EVTYPE) %>% summarise(total.fatalities = sum(FATALITIES), total.injuries = sum(INJURIES)) %>% arrange(-total.fatalities)
+```
+
+Let's check the data.
+
+```{r}
+head(health.grouped)
+```
+
+### Economic Impact Analysis
+
+The data provides two types of economic impact, namely property damage (PROPDMG) and crop damage (CROPDMG). The actual damage in $USD is indicated by PROPDMGEXP and CROPDMGEXP parameters. According to this [link](https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html), the index in the PROPDMGEXP and CROPDMGEXP can be interpreted as the following:-
+
+H, h -> hundreds = x100
+K, K -> kilos = x1,000
+M, m -> millions = x1,000,000
+B,b -> billions = x1,000,000,000
+(+) -> x1
+(-) -> x0
+(?) -> x0
+blank -> x0
+
+The total damage caused by each event type is calculated with the following code.
+
+Let's get the needed data for the Economic analysis from the raw data. 
+
+```{r}
+subset.economic <- weather.data %>% select(EVTYPE, PROPDMG,PROPDMGEXP,CROPDMG,CROPDMGEXP)
+```
+
+Now let's convert the symbols mentioned above according to the powers of 10. 
+
+```{r}
+Symbol <- sort(unique(as.character(subset.economic$PROPDMGEXP)))
+Multiplier <- c(0,0,0,1,10,10,10,10,10,10,10,10,10,10^9,10^2,10^2,10^3,10^6,10^6)
+convert.Multiplier <- data.frame(Symbol, Multiplier)
+
+subset.economic$Prop.Multiplier <- convert.Multiplier$Multiplier[match(subset.economic$PROPDMGEXP, convert.Multiplier$Symbol)]
+
+subset.economic$Crop.Multiplier <- convert.Multiplier$Multiplier[match(subset.economic$CROPDMGEXP, convert.Multiplier$Symbol)]
+
+```
+
+Now, let's multiply the total amounts od crop damage and property damage by the powers of 10 associated. Let's also merge the two columns into one big damage column. 
+
+```{r}
+subset.economic <- subset.economic %>% mutate(PROPDMG = PROPDMG*Prop.Multiplier) %>% mutate(CROPDMG = CROPDMG*Crop.Multiplier) %>% mutate(TOTAL.DMG = PROPDMG+CROPDMG)
+
+```
+
+Now, let's group the EVTYPE variable by total damage. 
+
+```{r}
+economic.grouped <- subset.economic %>% group_by(EVTYPE) %>% summarize(TOTAL.DMG.EVTYPE = sum(TOTAL.DMG))%>% arrange(-TOTAL.DMG.EVTYPE) 
+
+```
+
+Let's check the data. 
+
+```{r}
+head(economic.grouped)
+```
+
+## Results
+
+### Healt Impact
+
+The top 10 events with the highest total fatalities and injuries are shown graphically in two separate plots.
+
+First, we see the events that most caused fatalities. 
+
+```{r}
+library(ggplot2)
+g <- ggplot(health.grouped[1:10,], aes(x=reorder(EVTYPE, -total.fatalities), y=total.fatalities))+geom_bar(stat="identity") + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+ggtitle("Top 10 Events with Highest Total Fatalities") +labs(x="EVENT TYPE", y="Total Fatalities")
+g
+```
+
+Second, we see the events that most caused injuries. 
+
+```{r}
+g <- ggplot(health.grouped[1:10,], aes(x=reorder(EVTYPE, -total.injuries), y=total.injuries))+geom_bar(stat="identity") + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+ggtitle("Top 10 Events with Highest Total Injuries") +labs(x="EVENT TYPE", y="Total Injuries")
+g
+```
+
+**CONCLUSION: as shown in the figures, tornado causes the hightest in both the total fatality and injury count.**
+
+### Economic Impact
+
+The top 10 events with the highest total economic damages (property and crop combined) are shown graphically.
+
+```{r}
+g <- ggplot(economic.grouped[1:10,], aes(x=reorder(EVTYPE, -TOTAL.DMG.EVTYPE), y=TOTAL.DMG.EVTYPE))+geom_bar(stat="identity") + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+ggtitle("Top 10 Events with Highest Economic Impact") +labs(x="EVENT TYPE", y="Total Economic Impact ($USD)")
+g
+```
+
+**CONCLUSION: as shown in the figure, flood has the highest economic impact.**
